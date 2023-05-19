@@ -1,5 +1,10 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:http/http.dart' as http;
 
 import 'intro.dart';
 import 'map.dart';
@@ -17,12 +22,25 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> {
+  String? savedId = "";
+
   bool showIntro = false;
 
   @override
   void initState() {
     super.initState();
-    checkFirstLaunch();
+    checkFirstLaunch().then((value) {
+      if (!showIntro) {
+        getID();
+      }
+    });
+  }
+
+  void getID() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    setState(() {
+      savedId = prefs.getString('id') ?? "";
+    });
   }
 
   Future<void> checkFirstLaunch() async {
@@ -41,11 +59,14 @@ class _MyAppState extends State<MyApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        primarySwatch: Colors.blue,
-      ),
-      home: showIntro ? const IntroScreen() : const MapScreen(),
-    );
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData(
+          primarySwatch: Colors.blue,
+        ),
+        home: showIntro
+            ? IntroScreen()
+            : MapScreen(
+                id: savedId!,
+              ));
   }
 }

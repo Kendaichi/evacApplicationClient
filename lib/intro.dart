@@ -1,21 +1,25 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:introduction_screen/introduction_screen.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:loading_icon_button/loading_icon_button.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'map.dart';
 
 class IntroScreen extends StatefulWidget {
   const IntroScreen({super.key});
-
   @override
   State<IntroScreen> createState() => _IntroScreenState();
 }
 
 class _IntroScreenState extends State<IntroScreen> {
+  final position = LatLng(8.973949, 125.407456);
   //ipAdd
   String ipAddress =
-      'http://192.168.1.13'; //replace with the ipaddress of your server
+      'http://192.168.249.174'; //replace with the ipaddress of your server
 
 //formkey which will be used for validation
   final _formKey = GlobalKey<FormState>();
@@ -26,7 +30,31 @@ class _IntroScreenState extends State<IntroScreen> {
 
   //texteditingcontrollers. used to store the inputted datas on the TextFormFields
   final TextEditingController _nameController = TextEditingController();
-  final TextEditingController _addressController = TextEditingController();
+
+  String? savedId;
+  String? nameRes;
+
+  // @override
+  // initState() {
+  //   super.initState();
+  //   removeName();
+  // }
+
+  // void removeName() async {
+  //   SharedPreferences prefs = await SharedPreferences.getInstance();
+  //   savedId = prefs.getString('id');
+  //   print(savedId);
+  //   prefs.remove('id');
+  //   print(prefs.getString('id'));
+  // }
+
+  void saveId(String id) async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.setString('id', id);
+    setState(() {
+      savedId = prefs.getString('id');
+    });
+  }
 
   //what happens if the user clicks the submit button
   void buttonPressed() async {
@@ -50,11 +78,12 @@ class _IntroScreenState extends State<IntroScreen> {
   void sendInfo() async {
     // Get the form field values
     String name = _nameController.text;
-    String address = _addressController.text;
+    double latitude = position.latitude;
+    double longitude = position.longitude;
 
     // Create the request body
     String requestBody =
-        'name=${Uri.encodeComponent(name)}&address=${Uri.encodeComponent(address)}';
+        'name=${Uri.encodeComponent(name)}&latitude=${Uri.encodeComponent(latitude.toString())}&longitude=${Uri.encodeComponent(longitude.toString())}';
 
     // Send the POST request
     Uri apiUrl = Uri.parse('$ipAddress/evacApp/postInformations.php');
@@ -62,9 +91,18 @@ class _IntroScreenState extends State<IntroScreen> {
       'Content-Type': 'application/x-www-form-urlencoded',
     });
 
+    // print(response.body);
+
     if (response.statusCode == 200) {
+      var responseData = json.decode(response.body);
+      // print(responseData["id"]);
+      // print(responseData["name"]);
+      final id = responseData["id"];
+      saveId(id);
+      setState(() {
+        nameRes = responseData["name"];
+      });
       _nameController.clear();
-      _addressController.clear();
       _btnController.reset();
     } else {
       _btnController.error();
@@ -112,19 +150,6 @@ class _IntroScreenState extends State<IntroScreen> {
                   labelText: "Input Name Here(Juan O. Dela Cruz Jr.)",
                 ),
               ),
-              TextFormField(
-                controller: _addressController,
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Field Empty';
-                  } else {
-                    return null;
-                  }
-                },
-                decoration: const InputDecoration(
-                  labelText: "Address",
-                ),
-              ),
               LoadingButton(
                 onPressed: () {
                   if (_formKey.currentState!.validate()) {
@@ -145,15 +170,22 @@ class _IntroScreenState extends State<IntroScreen> {
       ),
       PageViewModel(
         titleWidget: Title(
-          color: Colors.black,
-          child: const Text(
-            "Thank You So Much",
-            style: TextStyle(
-              fontSize: 30,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        ),
+            color: Colors.black,
+            child: savedId == null
+                ? const Text(
+                    "You should Probably Tell Us your name first",
+                    style: TextStyle(
+                      fontSize: 30,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  )
+                : Text(
+                    "Hi $nameRes",
+                    style: const TextStyle(
+                      fontSize: 30,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  )),
         image: Image.asset("assets/intro3.png"),
         body: 'Feel Free to rate this App in Google Play',
         decoration: const PageDecoration(
@@ -178,10 +210,15 @@ class _IntroScreenState extends State<IntroScreen> {
       ),
       pages: getPages(),
       onDone: () {
-        Navigator.push(
-          context,
-          MaterialPageRoute(builder: (context) => const MapScreen()),
-        );
+        nameRes == null
+            ? null
+            : Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (context) => MapScreen(
+                          id: savedId!,
+                        )),
+              );
       },
       showSkipButton: false,
       skipOrBackFlex: 0,

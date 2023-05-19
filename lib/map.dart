@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:math';
 import 'dart:ui';
-import 'dart:developer' as dev;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -12,7 +11,9 @@ import 'package:open_route_service/open_route_service.dart';
 import 'package:http/http.dart' as http;
 
 class MapScreen extends StatefulWidget {
-  const MapScreen({super.key});
+  final String id;
+
+  const MapScreen({super.key, required this.id});
 
   @override
   State<MapScreen> createState() => _MapScreenState();
@@ -25,26 +26,21 @@ enum TransportationMode {
 }
 
 class _MapScreenState extends State<MapScreen> {
-  String ipAddress = 'http://192.168.1.13'; //replace IPaddress of your server
+  final position = LatLng(8.973950, 125.407456);
+  String ipAddress =
+      'http://192.168.249.174'; //replace IPaddress of your server
 
   final LoadingButtonController _btnController = LoadingButtonController();
   bool isLoading = true;
+
+  CrossFadeState _crossFadeState = CrossFadeState.showFirst;
 
   TransportationMode selectedTransportationMode = TransportationMode.driving;
 
   List<LatLng> points = [];
   List<Polyline> polylines = [];
 
-  final position = LatLng(8.969684, 125.411558);
-
-  final List<ORSCoordinate> locations = [
-    const ORSCoordinate(latitude: 8.969684, longitude: 125.411558),
-    const ORSCoordinate(latitude: 8.898606, longitude: 125.580119),
-    const ORSCoordinate(latitude: 8.916486, longitude: 125.585313),
-    const ORSCoordinate(latitude: 8.959563, longitude: 125.603165),
-    const ORSCoordinate(latitude: 8.938698, longitude: 125.628044),
-    const ORSCoordinate(latitude: 8.968259, longitude: 125.407822)
-  ];
+  List<ORSCoordinate> locations = [];
 
   OpenRouteService openrouteservice = OpenRouteService(
       apiKey: '5b3ce3597851110001cf6248ba5b43bc99fa48deac2dce8034ba9667');
@@ -52,10 +48,12 @@ class _MapScreenState extends State<MapScreen> {
   List<LatLng> evacuationCenters = [];
   List<Marker> markers = [];
 
+  // ignore: prefer_typing_uninitialized_variables
+  var user;
+
   @override
   void initState() {
     super.initState();
-
     fetchCoordinates().then((value) {
       setState(() {
         evacuationCenters = value;
@@ -97,6 +95,80 @@ class _MapScreenState extends State<MapScreen> {
     }).catchError((e) {
       throw Exception('Failed to fetch coordinates: $e');
     });
+    Future.delayed(const Duration(seconds: 2), () {
+      getUserInfo(widget.id);
+      sendLocation();
+    });
+  }
+
+  void getUserInfo(String userId) async {
+    // Send the GET request
+    Uri apiUrl = Uri.parse('$ipAddress/evacApp/getByUser.php?id=$userId');
+    var response = await http.get(apiUrl);
+
+    if (response.statusCode == 200) {
+      if (response.body.isNotEmpty) {
+        var responseData = json.decode(response.body);
+
+        if (responseData["success"]) {
+          setState(() {
+            user = responseData["user"];
+            if (user["safe"] == false) {
+              _crossFadeState = CrossFadeState.showSecond;
+            } else {
+              _crossFadeState = CrossFadeState.showFirst;
+            }
+          });
+          // print(user);
+        } else {
+          // User not found
+          print("User not found.");
+        }
+      } else {
+        // Empty response
+        print("Empty response.");
+      }
+    } else {
+      // Error occurred
+      print("Error: ${response.statusCode}");
+    }
+  }
+
+  void toggleSafe() async {
+    // Send the POST request
+    Uri apiUrl = Uri.parse('$ipAddress/evacApp/getByUser.php');
+    var response = await http.post(apiUrl, body: {'id': widget.id});
+    // print(response.body);
+
+    if (response.statusCode == 200) {
+      var responseData = json.decode(response.body);
+      print(responseData);
+      getUserInfo(widget.id);
+    } else {
+      // Error occurred
+      print("Error: ${response.statusCode}");
+    }
+  }
+
+  void sendLocation() async {
+    // Send the POST request
+    Uri apiUrl = Uri.parse('$ipAddress/evacApp/sendLocation.php');
+    var response = await http.post(apiUrl, body: {
+      'id': widget.id,
+      'latitude': position.latitude.toString(),
+      'longitude': position.longitude.toString()
+    });
+
+    // print(response.body);
+
+    if (response.statusCode == 200) {
+      var responseData = json.decode(response.body);
+      print(responseData);
+      // getUserInfo(widget.id);
+    } else {
+      // Error occurred
+      print("Error: ${response.statusCode}");
+    }
   }
 
   Future<List<LatLng>> fetchCoordinates() async {
@@ -110,6 +182,12 @@ class _MapScreenState extends State<MapScreen> {
         double longitude = double.parse(data['longitude']);
         return LatLng(latitude, longitude);
       }).toList();
+      locations.add(ORSCoordinate(
+          latitude: position.latitude, longitude: position.longitude));
+      locations.addAll(evacuationpoints.map((LatLng coordinate) =>
+          ORSCoordinate(
+              latitude: coordinate.latitude, longitude: coordinate.longitude)));
+      // print(locations);
       return evacuationpoints;
     } else {
       throw Exception('Failed to fetch coordinates: ${response.statusCode}');
@@ -233,6 +311,35 @@ class _MapScreenState extends State<MapScreen> {
           ),
         ),
         centerTitle: true,
+        actions: [
+          Container(
+            margin: const EdgeInsets.fromLTRB(0, 3, 10, 0),
+            child: AnimatedCrossFade(
+              firstChild: IconButton(
+                onPressed: () {
+                  toggleSafe();
+                },
+                icon: const Icon(
+                  Icons.toggle_off_outlined,
+                  color: Colors.green,
+                  size: 33,
+                ),
+              ),
+              secondChild: IconButton(
+                onPressed: () {
+                  toggleSafe();
+                },
+                icon: const Icon(
+                  Icons.toggle_on,
+                  color: Colors.red,
+                  size: 33,
+                ),
+              ),
+              crossFadeState: _crossFadeState,
+              duration: const Duration(milliseconds: 500),
+            ),
+          )
+        ],
       ),
       body: FlutterMap(
         options: MapOptions(
@@ -244,7 +351,7 @@ class _MapScreenState extends State<MapScreen> {
               InteractiveFlag.doubleTapZoom |
               InteractiveFlag.drag,
           onTap: (tapPosition, tappedLocation) {
-            dev.log(tappedLocation.toString());
+            print(tappedLocation.toString());
           },
         ),
         children: [

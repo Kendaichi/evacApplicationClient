@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:flutter_polyline_points/flutter_polyline_points.dart';
 import 'package:flutter_speed_dial/flutter_speed_dial.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:loading_icon_button/loading_icon_button.dart';
@@ -26,12 +28,17 @@ enum TransportationMode {
 }
 
 class _MapScreenState extends State<MapScreen> {
-  final position = LatLng(8.973950, 125.407456);
-  String ipAddress =
-      'http://192.168.249.174'; //replace IPaddress of your server
+  final position = LatLng(8.979671, 125.409217);
+  // final position = LatLng(_latitude, _longitude);
+
+  String ipAddress = 'http://192.168.1.13'; //replace IPaddress of your server
 
   final LoadingButtonController _btnController = LoadingButtonController();
+  final LoadingButtonController _buttonController2 = LoadingButtonController();
   bool isLoading = true;
+
+  bool addPolygon = false;
+  List<List<double>> polygonCoordinates = [];
 
   CrossFadeState _crossFadeState = CrossFadeState.showFirst;
 
@@ -39,6 +46,7 @@ class _MapScreenState extends State<MapScreen> {
 
   List<LatLng> points = [];
   List<Polyline> polylines = [];
+  List<PointLatLng> polylineDecoded = [];
 
   List<ORSCoordinate> locations = [];
 
@@ -47,6 +55,10 @@ class _MapScreenState extends State<MapScreen> {
 
   List<LatLng> evacuationCenters = [];
   List<Marker> markers = [];
+  List<Marker> polygonMarker = [];
+  List<Polygon> polygons = [];
+
+  // ignore: non_constant_identifier_names
 
   // ignore: prefer_typing_uninitialized_variables
   var user;
@@ -54,6 +66,7 @@ class _MapScreenState extends State<MapScreen> {
   @override
   void initState() {
     super.initState();
+    // getCoordinates(8.974434, 125.409333);
     fetchCoordinates().then((value) {
       setState(() {
         evacuationCenters = value;
@@ -63,18 +76,10 @@ class _MapScreenState extends State<MapScreen> {
           for (var i = 0; i < evacuationCenters.length; i++)
             Marker(
               point: evacuationCenters[i],
-              builder: (context) => GestureDetector(
-                onTap: () {
-                  getCoordinates(
-                    evacuationCenters[i].latitude,
-                    evacuationCenters[i].longitude,
-                  );
-                },
-                child: const Icon(
-                  Icons.local_hospital,
-                  size: 30,
-                  color: Colors.red,
-                ),
+              builder: (context) => const Icon(
+                Icons.local_hospital,
+                size: 30,
+                color: Colors.red,
               ),
             ),
 
@@ -95,10 +100,86 @@ class _MapScreenState extends State<MapScreen> {
     }).catchError((e) {
       throw Exception('Failed to fetch coordinates: $e');
     });
+    getAvoidPolygon();
     Future.delayed(const Duration(seconds: 2), () {
       getUserInfo(widget.id);
       sendLocation();
     });
+  }
+
+  void getAvoidPolygon() async {
+    final url = Uri.parse('$ipAddress/evacApp/getPolygons.php');
+    final response = await http.get(url);
+
+    // print(response.body);
+
+    if (response.statusCode == 200) {
+      if (response.body == "No data found.") {
+        null;
+      } else {
+        List<dynamic> polygonsData = json.decode(response.body);
+
+        // Create a list to store the polygons
+        List<Polygon> polygons = [];
+
+        // Iterate over each polygon data
+        for (var polygonData in polygonsData) {
+          // Extract the polygon string from the data
+          String polygonString = polygonData['polygon_string'];
+
+          // Remove the extra double quotes from the string
+          polygonString = polygonString.replaceAll('"', '');
+
+          // Parse the polygon coordinates from the string
+          List<List<dynamic>> coordinates =
+              json.decode(polygonString).cast<List<dynamic>>();
+
+          // Create a list to store the LatLng points for the polygon
+          List<LatLng> points = [];
+
+          // Iterate over each coordinate pair and create LatLng points
+          for (var coordinate in coordinates) {
+            double latitude = coordinate[1].toDouble();
+            double longitude = coordinate[0].toDouble();
+            points.add(LatLng(latitude, longitude));
+          }
+
+          // Create the Polygon and add it to the list
+          Polygon polygon = Polygon(
+            points: points,
+            color: Colors.blue.withOpacity(0.5),
+            borderStrokeWidth: 2,
+            borderColor: Colors.blue,
+            isFilled: true,
+          );
+          polygons.add(polygon);
+        }
+
+        // Update the state with the polygons
+        setState(() {
+          this.polygons = polygons;
+        });
+      }
+    } else {
+      throw Exception('Erorr getting polygons: ${response.statusCode}');
+    }
+  }
+
+  Future<void> addPolygonToDatabase(String polygon) async {
+    final url = Uri.parse('$ipAddress/evacApp/getPolygons.php');
+    final body = json.encode({'polygon': polygon});
+
+    final response = await http.post(
+      url,
+      body: body,
+      headers: {'Content-Type': 'application/json'},
+    );
+
+    if (response.statusCode == 200) {
+      print('Polygon added successfully.');
+    } else {
+      print('Failed to add polygon: ${response.body}');
+    }
   }
 
   void getUserInfo(String userId) async {
@@ -199,89 +280,231 @@ class _MapScreenState extends State<MapScreen> {
       locations: locations,
     );
 
+    // print("this was called");
+
     List<List<double>> durations = routeMatrix.durations;
     List<dynamic> destinations = routeMatrix.destinations;
 
     int sourceIndex = 0; // Index of locations[0]
 
-    // Find the index of the destination with the shortest duration from locations[0] (excluding itself)
+    // Find the indices of the top 10 destinations with the shortest durations from locations[0] (excluding itself)
     List<double> durationsFromSource = durations[sourceIndex];
     durationsFromSource[sourceIndex] =
         double.infinity; // Exclude itself by setting its duration to infinity
-    int closestDestinationIndex =
-        durationsFromSource.indexOf(durationsFromSource.reduce(min));
 
-    // Get the coordinates of the closest destination
-    double closestDestinationLat =
-        destinations[closestDestinationIndex].location.latitude;
-    double closestDestinationLon =
-        destinations[closestDestinationIndex].location.longitude;
+    List<int> closestDestinationIndices = [];
+    for (int i = 0; i < 10; i++) {
+      int closestIndex =
+          durationsFromSource.indexOf(durationsFromSource.reduce(min));
+      closestDestinationIndices.add(closestIndex);
+      durationsFromSource[closestIndex] = double
+          .infinity; // Exclude the closest destination by setting its duration to infinity
+    }
 
-    getCoordinates(closestDestinationLat, closestDestinationLon);
+    // Get the coordinates of the closest destinations
+    List<Map<String, double>> closestCoordinates = [];
+    for (int index in closestDestinationIndices) {
+      double closestDestinationLat = destinations[index].location.latitude;
+      double closestDestinationLon = destinations[index].location.longitude;
+
+      closestCoordinates.add({
+        'latitude': closestDestinationLat,
+        'longitude': closestDestinationLon,
+      });
+    }
+
+    // // Return the top 10 closest coordinates
+    // for (var coor in closestCoordinates) {
+    //   print(coor["latitude"]);
+    // }
+
+    return closestCoordinates;
   }
 
   //function to consume the openRouteservice api
-  getCoordinates(double lat, double lon) async {
-    ORSProfile profileOverride;
+  getCoordinates() async {
+    var profileOverride = '';
 
     switch (selectedTransportationMode) {
       case TransportationMode.walking:
-        profileOverride = ORSProfile.footWalking;
+        profileOverride = "foot-walking";
         break;
       case TransportationMode.driving:
-        profileOverride = ORSProfile.drivingCar;
+        profileOverride = "driving-car";
         break;
       case TransportationMode.motorcycle:
-        profileOverride = ORSProfile.cyclingElectric;
+        profileOverride = "cycling-electric";
         break;
     }
 
-    final List<ORSCoordinate> routeCoordinates =
-        await openrouteservice.directionsMultiRouteCoordsPost(
-      coordinates: [
-        ORSCoordinate(
-            latitude: position.latitude, longitude: position.longitude),
-        ORSCoordinate(
-          latitude: lat,
-          longitude: lon,
-        ),
-      ],
-      profileOverride: profileOverride,
-    );
+    final url = Uri.parse('$ipAddress/evacApp/getPolygons.php');
+    final response = await http.get(url);
+    List<List<List<List<double>>>> avoidPolygons = [];
+    // print(response.body);
 
-    //footWalking; drivingCar; cyclingElectric
+    if (response.statusCode == 200) {
+      if (response.body == "No data found.") {
+        null;
+      } else {
+        final List<dynamic> jsonResponse = json.decode(response.body);
 
-    List<LatLng> newPoints = [];
+        for (var item in jsonResponse) {
+          final String polygonString = item['polygon_string'];
+          final String formattedString = polygonString.replaceAll('"', '');
+          final List<dynamic> coordinates = json.decode(formattedString);
 
-    for (var object in routeCoordinates) {
-      newPoints.add(LatLng(object.latitude, object.longitude));
+          List<List<List<double>>> polygonCoordinates = [[]];
+
+          for (var coord in coordinates) {
+            final double latitude = coord[1];
+            final double longitude = coord[0];
+            polygonCoordinates[0].add(
+                [longitude, latitude]); // Add coordinates to the nested list
+          }
+
+          avoidPolygons.add(polygonCoordinates);
+        }
+
+        print(avoidPolygons);
+      }
+    } else {
+      throw Exception("Error Getting Polygons: ${response.statusCode}");
     }
 
+    List<Map<String, double>> closestCoordinates = await getMatrix();
+
+    String apiUrl =
+        'https://api.openrouteservice.org/v2/directions/$profileOverride';
+
+    final Map<String, String> headers = {
+      'Accept':
+          'application/json, application/geo+json, application/gpx+xml, img/png; charset=utf-8',
+      'Content-Type': 'application/json',
+      'Authorization':
+          '5b3ce3597851110001cf6248ba5b43bc99fa48deac2dce8034ba9667',
+    };
+
+    // Variables to store the closest coordinate and its corresponding distance or duration
+    Map<String, dynamic>? closestResponseData;
+    double? closestValue;
+
+    for (var coordinate in closestCoordinates) {
+      final Map<String, dynamic> requestBody = {
+        "coordinates": [
+          [position.longitude, position.latitude],
+          [coordinate["longitude"], coordinate["latitude"]]
+        ],
+        "language": "de",
+        "maneuvers": true,
+        "options": {
+          "avoid_polygons": {
+            "type": "MultiPolygon",
+            "coordinates": avoidPolygons,
+          }
+        }
+      };
+
+      final http.Response response = await http.post(Uri.parse(apiUrl),
+          headers: headers, body: jsonEncode(requestBody));
+      // print('Status: ${response.statusCode}');
+      // print('Headers: ${response.headers}');
+      // print('Body: ${response.body}');
+      var responseData = json.decode(response.body);
+      var summary = responseData['routes'][0]['summary'];
+      var duration = summary["duration"];
+      var distance = summary["distance"];
+
+      // print("$coordinate => {$duration , $distance}");
+      // ignore: prefer_typing_uninitialized_variables
+      var valueToCompare;
+      if (profileOverride == "foot-walking") {
+        valueToCompare = distance;
+      } else {
+        valueToCompare = duration;
+      }
+
+      if (closestValue == null || valueToCompare < closestValue) {
+        closestValue = valueToCompare;
+        closestResponseData = responseData;
+      }
+    }
+    // print("success");
+
+    // print(closestResponseData);
+
+    var encodedPol = closestResponseData!['routes'][0]['geometry'];
+
+    polylineDecoded = PolylinePoints().decodePolyline(encodedPol);
+    // print(polylineDecoded);
+    // print(polylineDecoded[0].latitude);
+    List<LatLng> newList = [];
+
+    for (var object in polylineDecoded) {
+      newList.add(LatLng(object.latitude, object.longitude));
+    }
+    // print(newList);
+
     setState(() {
-      points = newPoints;
+      points = newList;
       if (polylines.isNotEmpty) {
         polylines[0] = Polyline(
           points: points,
-          color: Colors.red,
+          color: Colors.green.shade900,
           strokeWidth: 3,
         );
       } else {
         polylines.add(Polyline(
           points: points,
-          color: Colors.red,
+          color: Colors.green.shade900,
           strokeWidth: 3,
         ));
       }
     });
+
+    //footWalking; drivingCar; cyclingElectric
   }
 
   void buttonPressed() async {
     _btnController.start();
-    await getMatrix();
+    await getCoordinates();
     _btnController.success();
     Future.delayed(const Duration(seconds: 1), () {
       _btnController.reset();
     });
+  }
+
+  // void addPolygonFunction() async {
+  //   _buttonController2.start();
+  //   polygonCoordinates.add(polygonCoordinates.first);
+  //   avoid_polygons.add([polygonCoordinates]);
+
+  //   // for (var coordinate in polygonCoordinates) {
+  //   //   var longitude = coordinate[0];
+  //   //   var latitude = coordinate[1];
+  //   //   print(latitude);
+  //   // }
+  //   print(polygonCoordinates);
+  //   print("\n $avoid_polygons");
+  //   _buttonController2.success();
+  // }
+
+  void addPolygonFunction() async {
+    _buttonController2.start();
+    polygonCoordinates.add(polygonCoordinates.first);
+    // print(polygonCoordinates.toString());
+    addPolygonToDatabase(polygonCoordinates.toString());
+    getAvoidPolygon();
+
+    // // Create a new polygon as a list of linear rings
+    // List<List<double>> newPolygon = List.from(polygonCoordinates);
+
+    // // Add the new polygon to avoid_polygons
+    // avoid_polygons.add([newPolygon]);
+
+    // print(polygonCoordinates);
+    // print("\n $avoid_polygons");
+    polygonCoordinates.clear();
+    _buttonController2.success();
   }
 
   @override
@@ -312,33 +535,46 @@ class _MapScreenState extends State<MapScreen> {
         ),
         centerTitle: true,
         actions: [
-          Container(
-            margin: const EdgeInsets.fromLTRB(0, 3, 10, 0),
-            child: AnimatedCrossFade(
-              firstChild: IconButton(
-                onPressed: () {
-                  toggleSafe();
-                },
-                icon: const Icon(
-                  Icons.toggle_off_outlined,
-                  color: Colors.green,
-                  size: 33,
-                ),
-              ),
-              secondChild: IconButton(
-                onPressed: () {
-                  toggleSafe();
-                },
-                icon: const Icon(
-                  Icons.toggle_on,
-                  color: Colors.red,
-                  size: 33,
-                ),
-              ),
-              crossFadeState: _crossFadeState,
-              duration: const Duration(milliseconds: 500),
-            ),
-          )
+          addPolygon
+              ? IconButton(
+                  onPressed: () {
+                    setState(() {
+                      polygonCoordinates.clear();
+                      polygonMarker.clear();
+                      addPolygon = false;
+                    });
+                  },
+                  icon: const Icon(
+                    Icons.cancel,
+                    color: Colors.black,
+                  ))
+              : Container(
+                  margin: const EdgeInsets.fromLTRB(0, 3, 10, 0),
+                  child: AnimatedCrossFade(
+                    firstChild: IconButton(
+                      onPressed: () {
+                        toggleSafe();
+                      },
+                      icon: const Icon(
+                        Icons.toggle_off_outlined,
+                        color: Colors.green,
+                        size: 33,
+                      ),
+                    ),
+                    secondChild: IconButton(
+                      onPressed: () {
+                        toggleSafe();
+                      },
+                      icon: const Icon(
+                        Icons.toggle_on,
+                        color: Colors.red,
+                        size: 33,
+                      ),
+                    ),
+                    crossFadeState: _crossFadeState,
+                    duration: const Duration(milliseconds: 500),
+                  ),
+                )
         ],
       ),
       body: FlutterMap(
@@ -351,7 +587,27 @@ class _MapScreenState extends State<MapScreen> {
               InteractiveFlag.doubleTapZoom |
               InteractiveFlag.drag,
           onTap: (tapPosition, tappedLocation) {
-            print(tappedLocation.toString());
+            // print(tappedLocation.toString());
+            List<double> coordinate = [
+              tappedLocation.longitude,
+              tappedLocation.latitude
+            ];
+            addPolygon
+                ? setState(() {
+                    polygonCoordinates.add(coordinate);
+                    polygonMarker.add(
+                      Marker(
+                          point: tappedLocation,
+                          builder: (context) => const Icon(
+                                Icons.location_pin,
+                                color: Colors.blue,
+                                size: 30,
+                              ),
+                          anchorPos: AnchorPos.align(AnchorAlign.top)),
+                    );
+                  })
+                : print(tappedLocation);
+            // print(polygonCoordinates);
           },
         ),
         children: [
@@ -364,84 +620,103 @@ class _MapScreenState extends State<MapScreen> {
               'id': ''
             },
           ),
-          MarkerLayer(
-            markers: markers,
-          ),
+          MarkerLayer(markers: [
+            ...markers,
+            if (polygonMarker.isNotEmpty) ...polygonMarker,
+          ]),
           //to print the route
           PolylineLayer(
             polylines: polylines,
           ),
-          // PolygonLayer(
-          //   polygonCulling: false,
-          //   polygons: [
-          //     Polygon(
-          //         points: [
-          //           LatLng(8.916185, 125.586196),
-          //           LatLng(8.915692, 125.586309),
-          //           LatLng(8.916148, 125.585799),
-          //         ],
-          //         color: Colors.blue.withOpacity(0.5),
-          //         borderStrokeWidth: 2,
-          //         borderColor: Colors.blue,
-          //         isFilled: true),
-          //   ],
-          // )
+          PolygonLayer(
+            polygonCulling: false,
+            polygons: polygons,
+          )
         ],
       ),
-      floatingActionButton: Container(
-        width: 70, // Adjust the size as needed
-        height: 70, // Adjust the size as needed
-        decoration: const BoxDecoration(
-          shape: BoxShape.circle,
-          color: Colors.blue,
-        ),
-        child: LoadingButton(
-          controller: _btnController,
-          onPressed: () => buttonPressed(),
-          child: SpeedDial(
-            animatedIcon: AnimatedIcons.search_ellipsis,
-            children: [
-              SpeedDialChild(
-                child: IconButton(
-                  icon: const Icon(Icons.directions_car),
-                  onPressed: () {
-                    setState(() {
-                      selectedTransportationMode = TransportationMode.driving;
-                    });
-                    buttonPressed();
-                  },
-                ),
-                label: 'Driving Car',
+      floatingActionButton: addPolygon
+          ? LoadingButton(
+              onPressed: () {
+                if (polygonMarker.length < 3) {
+                  print("error");
+                  _buttonController2.reset();
+                } else {
+                  setState(() {
+                    addPolygonFunction();
+                    polygonMarker.clear();
+                    polygonCoordinates.clear();
+                    addPolygon = false;
+                  });
+                }
+              },
+              controller: _buttonController2,
+              child: const Text("Add Polygon"),
+            )
+          : Container(
+              width: 50, // Adjust the size as needed
+              height: 50, // Adjust the size as needed
+              decoration: const BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.blue,
               ),
-              SpeedDialChild(
-                child: IconButton(
-                  icon: const Icon(Icons.electric_bike),
-                  onPressed: () {
-                    setState(() {
-                      selectedTransportationMode =
-                          TransportationMode.motorcycle;
-                    });
-                    buttonPressed();
-                  },
+              child: LoadingButton(
+                controller: _btnController,
+                onPressed: () {},
+                child: SpeedDial(
+                  animatedIcon: AnimatedIcons.search_ellipsis,
+                  children: [
+                    SpeedDialChild(
+                      child: IconButton(
+                        icon: const Icon(Icons.directions_car),
+                        onPressed: () {
+                          setState(() {
+                            selectedTransportationMode =
+                                TransportationMode.driving;
+                          });
+                          buttonPressed();
+                        },
+                      ),
+                      label: 'Driving Car',
+                    ),
+                    SpeedDialChild(
+                      child: IconButton(
+                        icon: const Icon(Icons.electric_bike),
+                        onPressed: () {
+                          setState(() {
+                            selectedTransportationMode =
+                                TransportationMode.motorcycle;
+                          });
+                          buttonPressed();
+                        },
+                      ),
+                      label: 'Motorcycle',
+                    ),
+                    SpeedDialChild(
+                      child: IconButton(
+                        icon: const Icon(Icons.nordic_walking),
+                        onPressed: () {
+                          setState(() {
+                            selectedTransportationMode =
+                                TransportationMode.walking;
+                          });
+                          buttonPressed();
+                        },
+                      ),
+                      label: 'Walking ',
+                    ),
+                    SpeedDialChild(
+                        child: IconButton(
+                            onPressed: () {
+                              setState(() {
+                                addPolygon = true;
+                              });
+                            },
+                            icon: const Icon(Icons.shape_line)),
+                        label: 'Add Polygon')
+                  ],
                 ),
-                label: 'Motorcycle',
               ),
-              SpeedDialChild(
-                child: IconButton(
-                  icon: const Icon(Icons.nordic_walking),
-                  onPressed: () {
-                    setState(() {
-                      selectedTransportationMode = TransportationMode.walking;
-                    });
-                    buttonPressed();
-                  },
-                ),
-                label: 'Walking ',
-              ),
-            ],
-          ),
-        ),
-      ),
+            ),
     );
   }
 }

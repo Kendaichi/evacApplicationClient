@@ -45,6 +45,7 @@ dependencies:
   shared_preferences: ^2.1.1
   flutter_inset_box_shadow: ^1.0.8
   provider: ^6.0.5
+  flutter_polyline_points: ^1.0.0
 
 dev_dependencies:
   flutter_test:

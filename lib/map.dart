@@ -31,7 +31,7 @@ class _MapScreenState extends State<MapScreen> {
   final position = LatLng(8.979671, 125.409217);
   // final position = LatLng(_latitude, _longitude);
 
-  String ipAddress = 'http://192.168.1.13'; //replace IPaddress of your server
+  String ipAddress = 'http://192.168.0.113'; //replace IPaddress of your server
 
   final LoadingButtonController _btnController = LoadingButtonController();
   final LoadingButtonController _buttonController2 = LoadingButtonController();
@@ -58,6 +58,8 @@ class _MapScreenState extends State<MapScreen> {
   List<Marker> polygonMarker = [];
   List<Polygon> polygons = [];
 
+  List<Map<String, double>> closestCoordinates = [];
+
   // ignore: non_constant_identifier_names
 
   // ignore: prefer_typing_uninitialized_variables
@@ -66,6 +68,7 @@ class _MapScreenState extends State<MapScreen> {
   @override
   void initState() {
     super.initState();
+
     // getCoordinates(8.974434, 125.409333);
     fetchCoordinates().then((value) {
       setState(() {
@@ -100,11 +103,17 @@ class _MapScreenState extends State<MapScreen> {
     }).catchError((e) {
       throw Exception('Failed to fetch coordinates: $e');
     });
+
     getAvoidPolygon();
-    Future.delayed(const Duration(seconds: 2), () {
+    Future.delayed(const Duration(seconds: 5), () {
       getUserInfo(widget.id);
       sendLocation();
+      fetchMatrixData();
     });
+  }
+
+  void fetchMatrixData() async {
+    closestCoordinates = await getMatrix();
   }
 
   void getAvoidPolygon() async {
@@ -275,7 +284,7 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
-  getMatrix() async {
+  Future getMatrix() async {
     final TimeDistanceMatrix routeMatrix = await openrouteservice.matrixPost(
       locations: locations,
     );
@@ -293,7 +302,7 @@ class _MapScreenState extends State<MapScreen> {
         double.infinity; // Exclude itself by setting its duration to infinity
 
     List<int> closestDestinationIndices = [];
-    for (int i = 0; i < 10; i++) {
+    for (int i = 0; i < 20; i++) {
       int closestIndex =
           durationsFromSource.indexOf(durationsFromSource.reduce(min));
       closestDestinationIndices.add(closestIndex);
@@ -370,8 +379,6 @@ class _MapScreenState extends State<MapScreen> {
     } else {
       throw Exception("Error Getting Polygons: ${response.statusCode}");
     }
-
-    List<Map<String, double>> closestCoordinates = await getMatrix();
 
     String apiUrl =
         'https://api.openrouteservice.org/v2/directions/$profileOverride';

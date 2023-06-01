@@ -31,7 +31,9 @@ class _MapScreenState extends State<MapScreen> {
   final position = LatLng(8.979671, 125.409217);
   // final position = LatLng(_latitude, _longitude);
 
-  String ipAddress = 'http://192.168.0.113'; //replace IPaddress of your server
+  bool isVisible = false;
+
+  String ipAddress = 'http://192.168.0.128'; //replace IPaddress of your server
 
   final LoadingButtonController _btnController = LoadingButtonController();
   final LoadingButtonController _buttonController2 = LoadingButtonController();
@@ -59,6 +61,9 @@ class _MapScreenState extends State<MapScreen> {
   List<Polygon> polygons = [];
 
   List<Map<String, double>> closestCoordinates = [];
+
+  double durationRoute = 0.0;
+  double distanceRoute = 0.0;
 
   // ignore: non_constant_identifier_names
 
@@ -110,13 +115,24 @@ class _MapScreenState extends State<MapScreen> {
       sendLocation();
       fetchMatrixData();
     });
+    startPeriodicTasks();
   }
 
   void fetchMatrixData() async {
     closestCoordinates = await getMatrix();
   }
 
+  void startPeriodicTasks() {
+    Timer.periodic(const Duration(seconds: 10), (Timer timer) {
+      sendLocation();
+      getAvoidPolygon();
+    });
+  }
+
   void getAvoidPolygon() async {
+    setState(() {
+      polygons.clear();
+    });
     final url = Uri.parse('$ipAddress/evacApp/getPolygons.php');
     final response = await http.get(url);
 
@@ -289,8 +305,6 @@ class _MapScreenState extends State<MapScreen> {
       locations: locations,
     );
 
-    // print("this was called");
-
     List<List<double>> durations = routeMatrix.durations;
     List<dynamic> destinations = routeMatrix.destinations;
 
@@ -302,7 +316,7 @@ class _MapScreenState extends State<MapScreen> {
         double.infinity; // Exclude itself by setting its duration to infinity
 
     List<int> closestDestinationIndices = [];
-    for (int i = 0; i < 20; i++) {
+    for (int i = 0; i < 10; i++) {
       int closestIndex =
           durationsFromSource.indexOf(durationsFromSource.reduce(min));
       closestDestinationIndices.add(closestIndex);
@@ -321,11 +335,6 @@ class _MapScreenState extends State<MapScreen> {
         'longitude': closestDestinationLon,
       });
     }
-
-    // // Return the top 10 closest coordinates
-    // for (var coor in closestCoordinates) {
-    //   print(coor["latitude"]);
-    // }
 
     return closestCoordinates;
   }
@@ -374,10 +383,15 @@ class _MapScreenState extends State<MapScreen> {
           avoidPolygons.add(polygonCoordinates);
         }
 
-        print(avoidPolygons);
+        // print(avoidPolygons);
       }
     } else {
-      throw Exception("Error Getting Polygons: ${response.statusCode}");
+      final snackBar = SnackBar(
+        content: Text(response.toString()),
+        duration: const Duration(seconds: 2),
+      );
+      // ignore: use_build_context_synchronously
+      ScaffoldMessenger.of(context).showSnackBar(snackBar);
     }
 
     String apiUrl =
@@ -413,15 +427,12 @@ class _MapScreenState extends State<MapScreen> {
 
       final http.Response response = await http.post(Uri.parse(apiUrl),
           headers: headers, body: jsonEncode(requestBody));
-      // print('Status: ${response.statusCode}');
-      // print('Headers: ${response.headers}');
-      // print('Body: ${response.body}');
+
       var responseData = json.decode(response.body);
       var summary = responseData['routes'][0]['summary'];
       var duration = summary["duration"];
       var distance = summary["distance"];
 
-      // print("$coordinate => {$duration , $distance}");
       // ignore: prefer_typing_uninitialized_variables
       var valueToCompare;
       if (profileOverride == "foot-walking") {
@@ -435,15 +446,20 @@ class _MapScreenState extends State<MapScreen> {
         closestResponseData = responseData;
       }
     }
-    // print("success");
-
-    // print(closestResponseData);
 
     var encodedPol = closestResponseData!['routes'][0]['geometry'];
+    var summary = closestResponseData['routes'][0]['summary'];
+    var duration = summary["duration"];
+    var distance = summary["distance"];
+    // print(summary);
+
+    setState(() {
+      durationRoute = duration / 60;
+      distanceRoute = distance / 1000;
+    });
 
     polylineDecoded = PolylinePoints().decodePolyline(encodedPol);
-    // print(polylineDecoded);
-    // print(polylineDecoded[0].latitude);
+
     List<LatLng> newList = [];
 
     for (var object in polylineDecoded) {
@@ -478,38 +494,18 @@ class _MapScreenState extends State<MapScreen> {
     Future.delayed(const Duration(seconds: 1), () {
       _btnController.reset();
     });
+    setState(() {
+      isVisible = true;
+    });
   }
-
-  // void addPolygonFunction() async {
-  //   _buttonController2.start();
-  //   polygonCoordinates.add(polygonCoordinates.first);
-  //   avoid_polygons.add([polygonCoordinates]);
-
-  //   // for (var coordinate in polygonCoordinates) {
-  //   //   var longitude = coordinate[0];
-  //   //   var latitude = coordinate[1];
-  //   //   print(latitude);
-  //   // }
-  //   print(polygonCoordinates);
-  //   print("\n $avoid_polygons");
-  //   _buttonController2.success();
-  // }
 
   void addPolygonFunction() async {
     _buttonController2.start();
     polygonCoordinates.add(polygonCoordinates.first);
-    // print(polygonCoordinates.toString());
+
     addPolygonToDatabase(polygonCoordinates.toString());
     getAvoidPolygon();
 
-    // // Create a new polygon as a list of linear rings
-    // List<List<double>> newPolygon = List.from(polygonCoordinates);
-
-    // // Add the new polygon to avoid_polygons
-    // avoid_polygons.add([newPolygon]);
-
-    // print(polygonCoordinates);
-    // print("\n $avoid_polygons");
     polygonCoordinates.clear();
     _buttonController2.success();
   }
@@ -519,6 +515,49 @@ class _MapScreenState extends State<MapScreen> {
     return Scaffold(
       extendBodyBehindAppBar: true,
       appBar: AppBar(
+        leading: IconButton(
+            onPressed: () {
+              fetchCoordinates().then((value) {
+                setState(() {
+                  evacuationCenters = value;
+                  // Initialize the markers list with fetched coordinates
+                  markers = [
+                    // Add the markers for the evacuation centers
+                    for (var i = 0; i < evacuationCenters.length; i++)
+                      Marker(
+                        point: evacuationCenters[i],
+                        builder: (context) => const Icon(
+                          Icons.local_hospital,
+                          size: 30,
+                          color: Colors.red,
+                        ),
+                      ),
+
+                    // Add the marker for the current location
+                    Marker(
+                        point: position,
+                        builder: (context) => IconButton(
+                              onPressed: () {},
+                              icon: const Icon(
+                                Icons.location_pin,
+                                color: Colors.green,
+                                size: 30,
+                              ),
+                            ),
+                        anchorPos: AnchorPos.align(AnchorAlign.top)),
+                  ];
+                });
+              }).catchError((e) {
+                throw Exception('Failed to fetch coordinates: $e');
+              });
+              getAvoidPolygon();
+              sendLocation();
+            },
+            icon: const Icon(
+              Icons.refresh,
+              color: Colors.black,
+            )),
+        automaticallyImplyLeading: false,
         flexibleSpace: ClipRect(
           child: BackdropFilter(
             filter: ImageFilter.blur(
@@ -584,63 +623,96 @@ class _MapScreenState extends State<MapScreen> {
                 )
         ],
       ),
-      body: FlutterMap(
-        options: MapOptions(
-          center: position,
-          zoom: 13.5,
-          maxZoom: 18,
-          minZoom: 3.0,
-          interactiveFlags: InteractiveFlag.pinchZoom |
-              InteractiveFlag.doubleTapZoom |
-              InteractiveFlag.drag,
-          onTap: (tapPosition, tappedLocation) {
-            // print(tappedLocation.toString());
-            List<double> coordinate = [
-              tappedLocation.longitude,
-              tappedLocation.latitude
-            ];
-            addPolygon
-                ? setState(() {
-                    polygonCoordinates.add(coordinate);
-                    polygonMarker.add(
-                      Marker(
-                          point: tappedLocation,
-                          builder: (context) => const Icon(
-                                Icons.location_pin,
-                                color: Colors.blue,
-                                size: 30,
-                              ),
-                          anchorPos: AnchorPos.align(AnchorAlign.top)),
-                    );
-                  })
-                : print(tappedLocation);
-            // print(polygonCoordinates);
-          },
-        ),
-        children: [
-          TileLayer(
-            urlTemplate:
-                'https://api.mapbox.com/styles/v1/kendaichi/clho8v3vu00mh01rhgm4v34v2/tiles/256/{z}/{x}/{y}@2x?access_token=pk.eyJ1Ijoia2VuZGFpY2hpIiwiYSI6ImNsaG84bG9kbzB2NWwzZXFybmlsMmNkbWsifQ.zwewd3N0NaAE_4vZ61N4dQ',
-            additionalOptions: const {
-              'accessToken':
-                  'pk.eyJ1Ijoia2VuZGFpY2hpIiwiYSI6ImNsaG84bG9kbzB2NWwzZXFybmlsMmNkbWsifQ.zwewd3N0NaAE_4vZ61N4dQ',
-              'id': ''
+      body: Stack(children: [
+        FlutterMap(
+          options: MapOptions(
+            center: position,
+            zoom: 13.5,
+            maxZoom: 18,
+            minZoom: 3.0,
+            interactiveFlags: InteractiveFlag.pinchZoom |
+                InteractiveFlag.doubleTapZoom |
+                InteractiveFlag.drag,
+            onTap: (tapPosition, tappedLocation) {
+              // print(tappedLocation.toString());
+              List<double> coordinate = [
+                tappedLocation.longitude,
+                tappedLocation.latitude
+              ];
+              addPolygon
+                  ? setState(() {
+                      polygonCoordinates.add(coordinate);
+                      polygonMarker.add(
+                        Marker(
+                            point: tappedLocation,
+                            builder: (context) => const Icon(
+                                  Icons.location_pin,
+                                  color: Colors.blue,
+                                  size: 30,
+                                ),
+                            anchorPos: AnchorPos.align(AnchorAlign.top)),
+                      );
+                    })
+                  : print(tappedLocation);
+              // print(polygonCoordinates);
             },
           ),
-          MarkerLayer(markers: [
-            ...markers,
-            if (polygonMarker.isNotEmpty) ...polygonMarker,
-          ]),
-          //to print the route
-          PolylineLayer(
-            polylines: polylines,
+          children: [
+            TileLayer(
+              urlTemplate:
+                  'https://api.mapbox.com/styles/v1/kendaichi/clho8v3vu00mh01rhgm4v34v2/tiles/256/{z}/{x}/{y}@2x?access_token=pk.eyJ1Ijoia2VuZGFpY2hpIiwiYSI6ImNsaG84bG9kbzB2NWwzZXFybmlsMmNkbWsifQ.zwewd3N0NaAE_4vZ61N4dQ',
+              additionalOptions: const {
+                'accessToken':
+                    'pk.eyJ1Ijoia2VuZGFpY2hpIiwiYSI6ImNsaG84bG9kbzB2NWwzZXFybmlsMmNkbWsifQ.zwewd3N0NaAE_4vZ61N4dQ',
+                'id': ''
+              },
+              // urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+              // userAgentPackageName: 'dev.fleaflet.flutter_map.example',
+            ),
+            MarkerLayer(markers: [
+              ...markers,
+              if (polygonMarker.isNotEmpty) ...polygonMarker,
+            ]),
+            //to print the route
+            PolylineLayer(
+              polylines: polylines,
+            ),
+            PolygonLayer(
+              polygonCulling: false,
+              polygons: polygons,
+            )
+          ],
+        ),
+        Visibility(
+          visible: isVisible,
+          child: ClipRRect(
+            child: BackdropFilter(
+              filter: ImageFilter.blur(
+                sigmaX: 10,
+                sigmaY: 10,
+              ),
+              child: Container(
+                  width: 150,
+                  height: 50,
+                  margin: const EdgeInsets.fromLTRB(20, 100, 0, 0),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withAlpha(200),
+                    borderRadius: BorderRadius.circular(15),
+                  ),
+                  child: Column(
+                    children: [
+                      const SizedBox(
+                        height: 10,
+                      ),
+                      Text(
+                          "Duration: ${durationRoute.toStringAsFixed(2)} min."),
+                      Text("Distance: ${distanceRoute.toStringAsFixed(2)} km."),
+                    ],
+                  )),
+            ),
           ),
-          PolygonLayer(
-            polygonCulling: false,
-            polygons: polygons,
-          )
-        ],
-      ),
+        )
+      ]),
       floatingActionButton: addPolygon
           ? LoadingButton(
               onPressed: () {

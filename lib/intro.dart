@@ -17,9 +17,10 @@ class IntroScreen extends StatefulWidget {
 
 class _IntroScreenState extends State<IntroScreen> {
   final position = LatLng(8.973949, 125.407456);
+
   //ipAdd
   String ipAddress =
-      'http://192.168.249.174'; //replace with the ipaddress of your server
+      'http://192.168.0.128'; //replace with the ipaddress of your server
 
 //formkey which will be used for validation
   final _formKey = GlobalKey<FormState>();

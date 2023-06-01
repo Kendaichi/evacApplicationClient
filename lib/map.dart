@@ -33,13 +33,14 @@ class _MapScreenState extends State<MapScreen> {
 
   bool isVisible = false;
 
-  String ipAddress = 'http://192.168.0.128'; //replace IPaddress of your server
+  String ipAddress = 'http://192.168.0.102'; //replace IPaddress of your server
 
   final LoadingButtonController _btnController = LoadingButtonController();
   final LoadingButtonController _buttonController2 = LoadingButtonController();
   bool isLoading = true;
 
   bool addPolygon = false;
+
   List<List<double>> polygonCoordinates = [];
 
   CrossFadeState _crossFadeState = CrossFadeState.showFirst;

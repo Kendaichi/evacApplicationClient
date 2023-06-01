@@ -20,7 +20,7 @@ class _IntroScreenState extends State<IntroScreen> {
 
   //ipAdd
   String ipAddress =
-      'http://192.168.0.128'; //replace with the ipaddress of your server
+      'http://192.168.0.102'; //replace with the ipaddress of your server
 
 //formkey which will be used for validation
   final _formKey = GlobalKey<FormState>();
